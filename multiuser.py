@@ -1,151 +1,249 @@
 import streamlit as st
 import pandas as pd
 import requests
-import json
 import time
-from datetime import datetime
+import random
 import threading
 
 # Page Configuration
-st.set_page_config(page_title="9211 Multi-User Automation Dashboard", layout="wide")
+st.set_page_config(page_title="9211 Multi-User Dashboard", page_icon="💉", layout="wide")
 
-st.title("🚜 9211 Portal Multi-User Data Sender")
-st.markdown("---")
+st.title("🚜 9211 Portal Multi-User Advanced Data Sender")
+st.write("Har user ki apni vaccine selection, tokens, aur alag CSV file background mein chalti rahegi.")
 
-# Global dictionary to track background job status safely across threads
-if 'jobs' not in st.session_state:
-    st.session_state.jobs = {}
+# --- PERSISTENT GLOBAL STORAGE ---
+# Using class-level global dict to keep status alive across page refreshes/disconnects
+if "global_jobs" not in st.session_state:
+    st.session_state["global_jobs"] = {}
 
-def get_headers(bearer_token, fcm_token):
-    return {
-        'accept': 'application/json, text/plain, */*',
-        'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
-        'authorization': f'Bearer {bearer_token}',
-        'content-type': 'application/json',
+VACCINE_LIST = (
+    "Haemorrhagic Septicemia Vaccine (HS)",
+    "Black Quarter Vaccine (BQV)",
+    "Enterotoxaemia Vaccine (ETV)",
+    "Foot and Mouth Disease (FMD - Local)",
+    "Foot and Mouth Disease (FMD - Imported)",
+    "Caprine Pleuro Pneumonia Vaccine (CCPV)",
+    "P.P.R. Vaccine",
+    "N.D Vaccine (Lasota)"
+)
+
+# --- BACKGROUND WORKER FUNCTION ---
+def execution_worker(user_id, df, bearer_token, fcm_token, vaccine_option, start_row=0):
+    job_state = st.session_state["global_jobs"][user_id]
+    job_state["status"] = "Running ⏳"
+    
+    API_URL = 'https://spms9211api.punjab.gov.pk/api/Vaccination/Add'
+    headers = {
+        'Authorization': f"Bearer {bearer_token}",
         'fcmtoken': fcm_token,
-        'origin': 'https://vax.9211.pk',
-        'priority': 'u=1, i',
-        'referer': 'https://vax.9211.pk/',
-        'sec-ch-ua': '"Android WebView";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-        'sec-ch-ua-mobile': '?1',
-        'sec-ch-ua-platform': '"Android"',
-        'sec-fetch-dest': 'empty',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-site': 'same-site',
-        'user-agent': 'Mozilla/5.0 (Linux; Android 13; V2205 Build/TP1A.220624.014; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/131.0.6778.135 Mobile Safari/537.36'
+        'HashKey': 'gwKpvUg6skx96JHp4sRvt/bGkRw=',
+        'X-API-KEY': 'A06B691B-8D21-42BB-9E39-9AF570F71105-9211@AP!',
+        'Content-Type': 'application/json; charset=UTF-8',
+        'Host': 'spms9211api.punjab.gov.pk',
+        'Connection': 'Keep-Alive',
+        'User-Agent': 'okhttp/4.5.0'
     }
 
-# Background Worker Function that runs even if browser disconnects
-def background_uploader(user_id, df, bearer, fcm):
-    st.session_state.jobs[user_id] = {"status": "Running", "progress": 0, "total": len(df), "success": 0, "failed": 0, "log": []}
-    headers = get_headers(bearer, fcm)
-    url = 'https://api.vax.9211.pk/api/AnimalVaccination/AddAnimalVaccinationV4'
-    
-    total_rows = len(df)
-    
-    for index, row in df.iterrows():
-        try:
-            # Preparing payload exactly as your original code
-            payload = {
-                "VaccinationId": 0,
-                "AnimalId": int(row['AnimalId']),
-                "TagNo": str(row['TagNo']),
-                "VaccineId": int(row['VaccineId']),
-                "VaccinationDate": str(row['VaccinationDate']),
-                "IsVerified": True,
-                "EmployeeId": int(row['EmployeeId']),
-                "Latitude": float(row['Latitude']),
-                "Longitude": float(row['Longitude']),
-                "DynamicVaccinationFields": []
-            }
+    for index in range(start_row, len(df)):
+        # Check if user manually requested a stop/pause via status control
+        if st.session_state["global_jobs"][user_id]["status"] == "Stopped 🛑":
+            break
             
-            response = requests.post(url, headers=headers, json=payload, timeout=15)
-            
-            if response.status_index == 200 or response.status_code == 201:
-                st.session_state.jobs[user_id]["success"] += 1
-            else:
-                st.session_state.jobs[user_id]["failed"] += 1
-                st.session_state.jobs[user_id]["log"].append(f"Row {index+1} (Tag: {row['TagNo']}): Error {response.status_code} - {response.text}")
-                
-        except Exception as e:
-            st.session_state.jobs[user_id]["failed"] += 1
-            st.session_state.jobs[user_id]["log"].append(f"Row {index+1}: Exception - {str(e)}")
-            
-        # Update progress dynamically
-        st.session_state.jobs[user_id]["progress"] = index + 1
+        row = df.iloc[index]
+        csv_animal_code = str(row['animalCode']).upper().strip() if 'animalCode' in df.columns else 'C'
         
-    st.session_state.jobs[user_id]["status"] = "Completed ✅"
+        # Exact Extraction Logic from original code
+        if "HS" in vaccine_option:
+            v_type = 219; s_id = 3; item_code = "04210350010"; item_abbr = "VHSOB50N"
+            v_name = "Haemorrhagic Septicemia Vaccine O/B - 50ml"
+            curr_bal = 64.0; sub_bal = 0.24; per_unit = 50; no_of_doses = 2.0
+            if csv_animal_code == 'B':
+                animal_type_str = "B, Buffalo ( 2.0 )"; a_id = 2; a_name = "Buffalo"; a_nested_id = 160
+            else:
+                animal_type_str = "C, Cow ( 2.0 )"; a_id = 1; a_name = "Cow"; a_nested_id = 70
+        elif "BQV" in vaccine_option:
+            v_type = 845; s_id = 5; item_code = "04220220429"; item_abbr = "VBQC50N"
+            v_name = "Black Quarter Vaccine - 50ml (Conc.)"
+            curr_bal = 64.0; sub_bal = 0.24; per_unit = 50; no_of_doses = 2.0
+            if csv_animal_code == 'B':
+                animal_type_str = "B, Buffalo ( 2.0 )"; a_id = 2; a_name = "Buffalo"; a_nested_id = 160
+            else:
+                animal_type_str = "C, Cow ( 2.0 )"; a_id = 1; a_name = "Cow"; a_nested_id = 70
+        elif "ETV" in vaccine_option:
+            v_type = 223; s_id = 6; item_code = "04250270014"; item_abbr = "VET50N"
+            v_name = "Enterotoxaemia Vaccine - 50 ml"
+            curr_bal = 64.0; sub_bal = 0.24; per_unit = 50; no_of_doses = 2.0
+            if csv_animal_code == 'S':
+                animal_type_str = "S, Sheep ( 1.0 )"; a_id = 7; a_name = "Sheep"; a_nested_id = 7610
+            else:
+                animal_type_str = "G, Goat ( 1.0 )"; a_id = 8; a_name = "Goat"; a_nested_id = 7611
+        elif "Local" in vaccine_option:
+            v_type = 254; s_id = 13; item_code = "04230230045"; item_abbr = "VFMDOB50N"
+            v_name = "Foot and mouth disease O/B - 50 ml"
+            curr_bal = 64.0; sub_bal = 0.24; per_unit = 50; no_of_doses = 2.0
+            if csv_animal_code == 'B':
+                animal_type_str = "B, Buffalo ( 2.0 )"; a_id = 2; a_name = "Buffalo"; a_nested_id = 160
+            else:
+                animal_type_str = "C, Cow ( 2.0 )"; a_id = 1; a_name = "Cow"; a_nested_id = 70
+        elif "Imported" in vaccine_option:
+            v_type = 1012; s_id = 13; item_code = "04230247020"; item_abbr = "VFMDI50N"
+            v_name = "Foot and Mouth Disease -50ml (Imported)"
+            curr_bal = 64.0; sub_bal = 0.24; per_unit = 50; no_of_doses = 2.0
+            if csv_animal_code == 'B':
+                animal_type_str = "B, Buffalo ( 2.0 )"; a_id = 2; a_name = "Buffalo"; a_nested_id = 160
+            else:
+                animal_type_str = "C, Cow ( 2.0 )"; a_id = 1; a_name = "Cow"; a_nested_id = 70
+        elif "CCPV" in vaccine_option:
+            v_type = 256; s_id = 11; item_code = "04270300047"; item_abbr = "VCP100N"
+            v_name = "Caprine Pleuro Pneumonia Vaccine - 100 doses"
+            curr_bal = 159.30; sub_bal = 0.17; per_unit = 100; no_of_doses = 1.0
+            if csv_animal_code == 'S':
+                animal_type_str = "S, Sheep ( 1.0 )"; a_id = 7; a_name = "Sheep"; a_nested_id = 7610
+            else:
+                animal_type_str = "G, Goat ( 1.0 )"; a_id = 8; a_name = "Goat"; a_nested_id = 7611
+        elif "P.P.R." in vaccine_option:
+            v_type = 233; s_id = 12; item_code = "04260280024"; item_abbr = "VPPR100N"
+            v_name = "P.P.R. Vaccine Along with Diluent-100 doses"
+            curr_bal = 159.30; sub_bal = 0.17; per_unit = 100; no_of_doses = 1.0
+            if csv_animal_code == 'S':
+                animal_type_str = "S, Sheep ( 1.0 )"; a_id = 7; a_name = "Sheep"; a_nested_id = 7610
+            else:
+                animal_type_str = "G, Goat ( 1.0 )"; a_id = 8; a_name = "Goat"; a_nested_id = 7611
+        else:
+            v_type = 249; s_id = 8; item_code = "04300330040"; item_abbr = "VNDL200N"
+            v_name = "N.D Vaccine (Lasota) -200 doses"
+            curr_bal = 159.30; sub_bal = 0.17; per_unit = 200; no_of_doses = 1.0
+            animal_type_str = "P, Poultry ( 1.0 )"; a_id = 9; a_name = "Poultry"; a_nested_id = 9
 
-# Main Layout: 20 Slots for 20 Users
-num_users = st.sidebar.number_input("Kitne Users Ka Data Upload Karna Hai?", min_value=1, max_value=30, value=5)
+        payload = {
+            "MouzaCode": str(row['MouzaCode']),
+            "CreatedBy": int(row['CreatedBy']),
+            "districtID": int(row['districtID']),
+            "divisionID": int(row['divisionID']),
+            "FarmerID": int(row['FarmerID']),
+            "latitude": str(row['latitude']),
+            "longitude": str(row['longitude']),
+            "mouzaID": int(row['mouzaID']),
+            "os": 30,
+            "tehsilID": int(row['tehsilID']),
+            "vaccinationLists": [{
+                "animalLists": [{
+                    "animalType": animal_type_str,
+                    "animalTypeID": a_id,
+                    "lastSubtractedBalance": sub_bal,
+                    "medicineTypesItem": {
+                        "animals": [{"animalCode": csv_animal_code, "animalID": a_id, "id": a_nested_id, "name": a_name, "noOfDoses": no_of_doses}],
+                        "currentBalance": curr_bal, "id": v_type, "isVaccine": True, "itemAbbreviation": item_abbr, "itemCode": item_code, "itemDescription": v_name, "perUnitMeasurement": per_unit
+                    },
+                    "noOfAnimals": int(row['noOfAnimals']) if pd.notna(row['noOfAnimals']) else 1
+                }],
+                "BatchNo": str(row['BatchNo']), "HospitalID": int(row['HospitalID']), "serviceID": s_id, "vaccineName": v_name, "VaccineType": v_type
+            }],
+            "version": "1.3.0"
+        }
 
-user_data_inputs = []
+        try:
+            r = requests.post(API_URL, json=payload, headers=headers, timeout=20)
+            if r.status_code == 200 or r.status_code == 201:
+                job_state["success_count"] += 1
+            elif r.status_code == 401:
+                job_state["status"] = "Error ❌"
+                job_state["last_error"] = "Session Expired (401 Error). Naya Bearer Code dalein!"
+                break
+            else:
+                job_state["status"] = "Error ❌"
+                job_state["last_error"] = f"Row {index+1} Error {r.status_code}: {r.text[:100]}"
+                break
+        except Exception as e:
+            job_state["status"] = "Error ❌"
+            job_state["last_error"] = f"Network Timeout / Exception: {str(e)}"
+            break
 
-st.subheader("📋 Enter Details For Each User Profile")
+        # Save exact pointer location
+        job_state["current_index"] = index + 1
+        
+        # Random Delay logic requested: 40 to 100 seconds
+        time.sleep(random.randint(40, 100))
 
+    if job_state["current_index"] >= job_state["total_records"] and job_state["status"] == "Running ⏳":
+        job_state["status"] = "Completed 🎉"
+
+# --- SIDEBAR CONTROL ---
+num_users = st.sidebar.number_input("Kitne Users Ka Data Upload Karna Hai?", min_value=1, max_value=30, value=2)
+
+st.header("📋 Enter Details For Each User Profile")
+
+# --- UI GENERATION LOOP ---
 for i in range(int(num_users)):
     user_id = f"User_{i+1}"
-    with st.expander(f"👤 USER PROFILE #{i+1} Configuration", expanded=True):
-        col1, col2, col3 = st.columns([1, 2, 2])
-        
-        with col1:
-            uploaded_file = st.file_uploader(f"Upload CSV File", type=["csv"], key=f"file_{user_id}")
-        with col2:
-            bearer_input = st.text_input(f"Bearer Token", placeholder="eyJhbGciOi...", key=f"bearer_{user_id}")
-        with col3:
-            fcm_input = st.text_input(f"FCM Token", placeholder="fL5xO-...", key=f"fcm_{user_id}")
+    
+    # Initialize background safe state arrays
+    if user_id not in st.session_state["global_jobs"]:
+        st.session_state["global_jobs"][user_id] = {
+            "status": "Not Started", "current_index": 0, "total_records": 0,
+            "success_count": 0, "last_error": "No error yet"
+        }
+    
+    current_job = st.session_state["global_jobs"][user_id]
+    
+    with st.expander(f"👤 USER PROFILE #{i+1} Configuration & Monitoring Dashboard", expanded=True):
+        c1, c2, c3 = st.columns([2, 3, 3])
+        with c1:
+            u_file = st.file_uploader(f"Upload CSV File", type=["csv"], key=f"file_{user_id}")
+        with c2:
+            u_bearer = st.text_input(f"Bearer Token", key=f"bearer_{user_id}")
+        with c3:
+            u_fcm = st.text_input(f"FCM Token", value="fm68XvPkTJW6tliWwPa7jS...", key=f"fcm_{user_id}")
             
-        if uploaded_file and bearer_input and fcm_input:
-            try:
-                df = pd.read_csv(uploaded_file)
-                user_data_inputs.append({
-                    "id": user_id,
-                    "df": df,
-                    "bearer": bearer_input,
-                    "fcm": fcm_input
-                })
-                st.success(f"✔️ Validated: Total {len(df)} records found in CSV.")
-            except Exception as e:
-                st.error(f"Error reading CSV: {str(e)}")
+        # VACCINE DROPDOWN SELECTION ADDED PER USER 
+        u_vaccine = st.selectbox(f"Kaunsi Vaccine Is Profile Par Chalani Hai?", VACCINE_LIST, key=f"vac_{user_id}")
+        
+        # --- CONTROL STATUS INTERFACE ---
+        col_status, col_percent, col_actions = st.columns([2, 3, 3])
+        
+        with col_status:
+            st.write(f"**Status:** {current_job['status']}")
+            if current_job['status'] == "Error ❌":
+                st.error(f"⚠️ {current_job['last_error']}")
+                
+        with col_percent:
+            total = current_job["total_records"]
+            done = current_job["current_index"]
+            pct = int((done / total) * 100) if total > 0 else 0
+            st.progress(pct / 100.0, text=f"Progress: {done}/{total} ({pct}%)")
+            st.write(f"Kamyab Records: **{current_job['success_count']}**")
+            
+        with col_actions:
+            # 1. Start Button
+            if u_file and u_bearer and current_job["status"] in ["Not Started", "Completed 🎉"]:
+                if st.button("🚀 Shuru Karein", key=f"start_btn_{user_id}"):
+                    df_loaded = pd.read_csv(u_file)
+                    current_job["total_records"] = len(df_loaded)
+                    current_job["current_index"] = 0
+                    current_job["success_count"] = 0
+                    
+                    t = threading.Thread(target=execution_worker, args=(user_id, df_loaded, u_bearer, u_fcm, u_vaccine, 0))
+                    t.daemon = True
+                    t.start()
+                    st.rerun()
+
+            # 2. Resend / Resume Button (If stopped or hit error)
+            if current_job["status"] in ["Error ❌", "Stopped 🛑"] and u_file:
+                if st.button("🔄 Resend / Resume Process", key=f"resume_btn_{user_id}"):
+                    df_loaded = pd.read_csv(u_file)
+                    current_job["total_records"] = len(df_loaded)
+                    
+                    t = threading.Thread(target=execution_worker, args=(user_id, df_loaded, u_bearer, u_fcm, u_vaccine, current_job["current_index"]))
+                    t.daemon = True
+                    t.start()
+                    st.rerun()
+                    
+            # 3. Stop Button (Emergency Break)
+            if current_job["status"] == "Running ⏳":
+                if st.button("🛑 Stop Process", key=f"stop_btn_{user_id}"):
+                    current_job["status"] = "Stopped 🛑"
+                    st.rerun()
 
 st.markdown("---")
-
-# Global Action Button
-if len(user_data_inputs) > 0:
-    if st.button("🚀 START ALL ONLINE BACKGROUND UPLOADS", type="primary", use_container_width=True):
-        for data in user_data_inputs:
-            # Check if job is already running to avoid double triggers
-            if data["id"] not in st.session_state.jobs or st.session_state.jobs[data["id"]]["status"] != "Running":
-                # Spawning independent threads for background tasks
-                t = threading.Thread(
-                    target=background_uploader, 
-                    args=(data["id"], data["df"], data["bearer"], data["fcm"])
-                )
-                t.daemon = True # Allows thread to run in background independently
-                t.start()
-        st.success("All configured user uploads have been kicked off in the cloud backend! You can safely close your system.")
-
-# Live Status Dashboard
-if st.session_state.jobs:
-    st.markdown("---")
-    st.subheader("📊 Live Background Process Monitor")
-    
-    for user_id, info in st.session_state.jobs.items():
-        with st.container():
-            col_name, col_status, col_prog = st.columns([1, 1, 3])
-            with col_name:
-                st.write(f"**{user_id}**")
-            with col_status:
-                if info["status"] == "Running":
-                    st.info(f"⏳ Processing ({info['success']} Sent, {info['failed']} Failed)")
-                else:
-                    st.success(info["status"])
-            with col_prog:
-                progress_percentage = min(1.0, info["progress"] / info["total"]) if info["total"] > 0 else 0.0
-                st.progress(progress_percentage, text=f"{info['progress']}/{info['total']} Rows Done")
-                
-            # Expander for errors if any
-            if info["log"]:
-                with st.expander(f"⚠️ Show Error Logs for {user_id}"):
-                    for log_msg in info["log"][-10:]: # Show last 10 errors
-                        st.caption(log_msg)
+if st.button("🔄 Refresh System Dashboard Status Manually"):
+    st.rerun()
