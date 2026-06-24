@@ -9,10 +9,9 @@ import threading
 st.set_page_config(page_title="9211 Multi-User Dashboard", page_icon="💉", layout="wide")
 
 st.title("🚜 9211 Portal Multi-User Advanced Data Sender")
-st.write("Har user ki apni vaccine selection, tokens, aur alag CSV file background mein chalti rahegi.")
+st.write("Har user ka apna 'Run' button hoga. Details fill karein aur us makhsoos user ki automation shuru karein.")
 
 # --- PERSISTENT GLOBAL STORAGE ---
-# Using class-level global dict to keep status alive across page refreshes/disconnects
 if "global_jobs" not in st.session_state:
     st.session_state["global_jobs"] = {}
 
@@ -45,7 +44,7 @@ def execution_worker(user_id, df, bearer_token, fcm_token, vaccine_option, start
     }
 
     for index in range(start_row, len(df)):
-        # Check if user manually requested a stop/pause via status control
+        # Check if user requested a stop
         if st.session_state["global_jobs"][user_id]["status"] == "Stopped 🛑":
             break
             
@@ -159,10 +158,10 @@ def execution_worker(user_id, df, bearer_token, fcm_token, vaccine_option, start
             job_state["last_error"] = f"Network Timeout / Exception: {str(e)}"
             break
 
-        # Save exact pointer location
+        # Save exact location
         job_state["current_index"] = index + 1
         
-        # Random Delay logic requested: 40 to 100 seconds
+        # Random Delay: 40 to 100 seconds
         time.sleep(random.randint(40, 100))
 
     if job_state["current_index"] >= job_state["total_records"] and job_state["status"] == "Running ⏳":
@@ -171,13 +170,12 @@ def execution_worker(user_id, df, bearer_token, fcm_token, vaccine_option, start
 # --- SIDEBAR CONTROL ---
 num_users = st.sidebar.number_input("Kitne Users Ka Data Upload Karna Hai?", min_value=1, max_value=30, value=2)
 
-st.header("📋 Enter Details For Each User Profile")
+st.header("📋 User Profiles Panel")
 
 # --- UI GENERATION LOOP ---
 for i in range(int(num_users)):
     user_id = f"User_{i+1}"
     
-    # Initialize background safe state arrays
     if user_id not in st.session_state["global_jobs"]:
         st.session_state["global_jobs"][user_id] = {
             "status": "Not Started", "current_index": 0, "total_records": 0,
@@ -186,7 +184,7 @@ for i in range(int(num_users)):
     
     current_job = st.session_state["global_jobs"][user_id]
     
-    with st.expander(f"👤 USER PROFILE #{i+1} Configuration & Monitoring Dashboard", expanded=True):
+    with st.expander(f"👤 USER PROFILE #{i+1} - Configuration & Live Control", expanded=True):
         c1, c2, c3 = st.columns([2, 3, 3])
         with c1:
             u_file = st.file_uploader(f"Upload CSV File", type=["csv"], key=f"file_{user_id}")
@@ -195,10 +193,9 @@ for i in range(int(num_users)):
         with c3:
             u_fcm = st.text_input(f"FCM Token", value="fm68XvPkTJW6tliWwPa7jS...", key=f"fcm_{user_id}")
             
-        # VACCINE DROPDOWN SELECTION ADDED PER USER 
-        u_vaccine = st.selectbox(f"Kaunsi Vaccine Is Profile Par Chalani Hai?", VACCINE_LIST, key=f"vac_{user_id}")
+        u_vaccine = st.selectbox(f"Kaunsi Vaccine Chalani Hai?", VACCINE_LIST, key=f"vac_{user_id}")
         
-        # --- CONTROL STATUS INTERFACE ---
+        # --- MONITORING & INDIVIDUAL RUN BUTTONS ---
         col_status, col_percent, col_actions = st.columns([2, 3, 3])
         
         with col_status:
@@ -211,12 +208,12 @@ for i in range(int(num_users)):
             done = current_job["current_index"]
             pct = int((done / total) * 100) if total > 0 else 0
             st.progress(pct / 100.0, text=f"Progress: {done}/{total} ({pct}%)")
-            st.write(f"Kamyab Records: **{current_job['success_count']}**")
+            st.write(f"Kamyab Entries: **{current_job['success_count']}**")
             
         with col_actions:
-            # 1. Start Button
+            # INDIVIDUAL RUN BUTTON FOR EACH USER 
             if u_file and u_bearer and current_job["status"] in ["Not Started", "Completed 🎉"]:
-                if st.button("🚀 Shuru Karein", key=f"start_btn_{user_id}"):
+                if st.button(f"🚀 Run User {i+1} Automation", key=f"run_btn_{user_id}", type="primary", use_container_width=True):
                     df_loaded = pd.read_csv(u_file)
                     current_job["total_records"] = len(df_loaded)
                     current_job["current_index"] = 0
@@ -227,9 +224,9 @@ for i in range(int(num_users)):
                     t.start()
                     st.rerun()
 
-            # 2. Resend / Resume Button (If stopped or hit error)
+            # Resume Button (If stopped or hit error)
             if current_job["status"] in ["Error ❌", "Stopped 🛑"] and u_file:
-                if st.button("🔄 Resend / Resume Process", key=f"resume_btn_{user_id}"):
+                if st.button(f"🔄 Resume User {i+1}", key=f"resume_btn_{user_id}", use_container_width=True):
                     df_loaded = pd.read_csv(u_file)
                     current_job["total_records"] = len(df_loaded)
                     
@@ -238,12 +235,12 @@ for i in range(int(num_users)):
                     t.start()
                     st.rerun()
                     
-            # 3. Stop Button (Emergency Break)
+            # Stop Button
             if current_job["status"] == "Running ⏳":
-                if st.button("🛑 Stop Process", key=f"stop_btn_{user_id}"):
+                if st.button(f"🛑 Stop User {i+1}", key=f"stop_btn_{user_id}", type="secondary", use_container_width=True):
                     current_job["status"] = "Stopped 🛑"
                     st.rerun()
 
 st.markdown("---")
-if st.button("🔄 Refresh System Dashboard Status Manually"):
+if st.button("🔄 Refresh System Dashboard Status Manually", use_container_width=True):
     st.rerun()
