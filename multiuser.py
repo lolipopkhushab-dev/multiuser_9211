@@ -8,7 +8,7 @@ import random
 st.set_page_config(page_title="9211 Live Dashboard", page_icon="🚜", layout="wide")
 
 st.title("🚜 9211 Portal Multi-User Live Data Sender")
-st.write("Is dashboard mein aapka data aapke samne live upload hoga aur har row ka status live nazar aayega.")
+st.write("Live status dashboard. Agar Code 401 aaye toh naya token dalein.")
 
 # --- INITIALIZE PERSISTENT STORAGE ---
 if "user_files" not in st.session_state:
@@ -33,8 +33,8 @@ VACCINE_LIST = (
 def send_row(row, bearer_token, fcm_token, vaccine_option, df_columns):
     API_URL = 'https://spms9211api.punjab.gov.pk/api/Vaccination/Add'
     headers = {
-        'Authorization': f"Bearer {bearer_token}",
-        'fcmtoken': fcm_token,
+        'Authorization': f"Bearer {bearer_token.strip()}",
+        'fcmtoken': fcm_token.strip(),
         'HashKey': 'gwKpvUg6skx96JHp4sRvt/bGkRw=',
         'X-API-KEY': 'A06B691B-8D21-42BB-9E39-9AF570F71105-9211@AP!',
         'Content-Type': 'application/json; charset=UTF-8',
@@ -170,7 +170,6 @@ for i in range(int(num_users)):
         
         has_data = user_id in st.session_state["user_files"]
         
-        # Display Live Logs box inside the expander
         st.caption("Live Logs / Error Stream:")
         st.text_area("", value="\n".join(st.session_state["logs"][user_id][-6:]), height=110, key=f"log_box_{user_id}", disabled=True)
         
@@ -178,7 +177,7 @@ for i in range(int(num_users)):
         
         with col_status:
             st.write(f"**Status:** {p_state['status']}")
-            st.write(f"Kamyab Entries: **{p_state['success']}** | Failed: **{p_state['failed']}**")
+            st.write(f"Kamyab: **{p_state['success']}** | Failed: **{p_state['failed']}**")
                 
         with col_percent:
             pct = int((p_state["done"] / p_state["total"]) * 100) if p_state["total"] > 0 else 0
@@ -191,9 +190,6 @@ for i in range(int(num_users)):
                     p_state["status"] = "Processing... ⚡"
                     st.session_state["logs"][user_id] = ["Starting upload script..."]
                     
-                    # Run synchronously step by step with interactive display updates
-                    progress_bar_widget = st.empty()
-                    
                     for idx, row in df.iterrows():
                         status_code, response_text = send_row(row, u_bearer, u_fcm, u_vaccine, df.columns)
                         
@@ -202,16 +198,26 @@ for i in range(int(num_users)):
                             log_msg = f"🟢 Row {idx+1} [Farmer: {row.get('FarmerID',' N/A ')}]: Status 200 - OK"
                         else:
                             p_state["failed"] += 1
-                            log_msg = f"❌ Row {idx+1} Failed: Code {status_code} - {response_text[:40]}"
+                            log_msg = f"❌ Row {idx+1} Failed: Code {status_code} - {response_text[:80]}"
+                            p_state["status"] = f"Error {status_code} ❌"
+                            st.session_state["logs"][user_id].append(log_msg)
+                            st.rerun()
+                            break # Token invalid hone par yahin ruk jaye
                             
                         st.session_state["logs"][user_id].append(log_msg)
                         p_state["done"] = idx + 1
                         
-                        # Live refresh the page UI instantly during execution
+                        # Live refresh UI
                         st.rerun()
                         
-                        # Random Delay: 40 to 100 seconds requested
+                        # Delay 40-100s
                         time.sleep(random.randint(40, 100))
                         
-                    p_state["status"] = "Completed ✅"
+                    if p_state["failed"] == 0:
+                        p_state["status"] = "Completed ✅"
                     st.rerun()
+
+st.markdown("---")
+# WAPAS LAGA DIYA REFRESH BUTTON APKI SAHULAT K LIYE
+if st.button("🔄 Refresh Dashboard Manually", use_container_width=True):
+    st.rerun()
