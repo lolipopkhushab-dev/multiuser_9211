@@ -9,11 +9,13 @@ import threading
 st.set_page_config(page_title="9211 Multi-User Dashboard", page_icon="💉", layout="wide")
 
 st.title("🚜 9211 Portal Multi-User Advanced Data Sender")
-st.write("Har user ka apna 'Run' button hoga. Details fill karein aur us makhsoos user ki automation shuru karein.")
+st.write("Har user ka data aur buttons hamesha mahfooz rahenge. Sukoon se bari-bari sab ko run karein.")
 
-# --- PERSISTENT GLOBAL STORAGE ---
+# --- INITIALIZE PERSISTENT STORAGE ---
 if "global_jobs" not in st.session_state:
     st.session_state["global_jobs"] = {}
+if "user_files" not in st.session_state:
+    st.session_state["user_files"] = {}
 
 VACCINE_LIST = (
     "Haemorrhagic Septicemia Vaccine (HS)",
@@ -44,14 +46,13 @@ def execution_worker(user_id, df, bearer_token, fcm_token, vaccine_option, start
     }
 
     for index in range(start_row, len(df)):
-        # Check if user requested a stop
         if st.session_state["global_jobs"][user_id]["status"] == "Stopped 🛑":
             break
             
         row = df.iloc[index]
         csv_animal_code = str(row['animalCode']).upper().strip() if 'animalCode' in df.columns else 'C'
         
-        # Exact Extraction Logic from original code
+        # Exact Extraction Logic
         if "HS" in vaccine_option:
             v_type = 219; s_id = 3; item_code = "04210350010"; item_abbr = "VHSOB50N"
             v_name = "Haemorrhagic Septicemia Vaccine O/B - 50ml"
@@ -147,18 +148,17 @@ def execution_worker(user_id, df, bearer_token, fcm_token, vaccine_option, start
                 job_state["success_count"] += 1
             elif r.status_code == 401:
                 job_state["status"] = "Error ❌"
-                job_state["last_error"] = "Session Expired (401 Error). Naya Bearer Code dalein!"
+                job_state["last_error"] = "Session Expired (401 Error). Naya Token lagayein!"
                 break
             else:
                 job_state["status"] = "Error ❌"
-                job_state["last_error"] = f"Row {index+1} Error {r.status_code}: {r.text[:100]}"
+                job_state["last_error"] = f"Row {index+1} Error {r.status_code}: {r.text[:80]}"
                 break
         except Exception as e:
             job_state["status"] = "Error ❌"
-            job_state["last_error"] = f"Network Timeout / Exception: {str(e)}"
+            job_state["last_error"] = f"Network Timeout: {str(e)[:50]}"
             break
 
-        # Save exact location
         job_state["current_index"] = index + 1
         
         # Random Delay: 40 to 100 seconds
@@ -168,9 +168,9 @@ def execution_worker(user_id, df, bearer_token, fcm_token, vaccine_option, start
         job_state["status"] = "Completed 🎉"
 
 # --- SIDEBAR CONTROL ---
-num_users = st.sidebar.number_input("Kitne Users Ka Data Upload Karna Hai?", min_value=1, max_value=30, value=2)
+num_users = st.sidebar.number_input("Kitne Users Ka Data Upload Karna Hai?", min_value=1, max_value=30, value=3)
 
-st.header("📋 User Profiles Panel")
+st.header("📋 Multi-User Automation Panel")
 
 # --- UI GENERATION LOOP ---
 for i in range(int(num_users)):
@@ -181,19 +181,29 @@ for i in range(int(num_users)):
             "status": "Not Started", "current_index": 0, "total_records": 0,
             "success_count": 0, "last_error": "No error yet"
         }
-    
+        
     current_job = st.session_state["global_jobs"][user_id]
     
-    with st.expander(f"👤 USER PROFILE #{i+1} - Configuration & Live Control", expanded=True):
+    with st.expander(f"👤 USER PROFILE #{i+1} - Configuration & Live Status", expanded=True):
         c1, c2, c3 = st.columns([2, 3, 3])
         with c1:
             u_file = st.file_uploader(f"Upload CSV File", type=["csv"], key=f"file_{user_id}")
+            # Cache the file structure in memory so it doesn't vanish on rerun
+            if u_file is not None:
+                try:
+                    st.session_state["user_files"][user_id] = pd.read_csv(u_file)
+                    current_job["total_records"] = len(st.session_state["user_files"][user_id])
+                except Exception as e:
+                    st.error(f"CSV parhne mein masla hai.")
         with c2:
             u_bearer = st.text_input(f"Bearer Token", key=f"bearer_{user_id}")
         with c3:
             u_fcm = st.text_input(f"FCM Token", value="fm68XvPkTJW6tliWwPa7jS...", key=f"fcm_{user_id}")
             
         u_vaccine = st.selectbox(f"Kaunsi Vaccine Chalani Hai?", VACCINE_LIST, key=f"vac_{user_id}")
+        
+        # Check if we have data locked in memory for this user
+        has_data = user_id in st.session_state["user_files"]
         
         # --- MONITORING & INDIVIDUAL RUN BUTTONS ---
         col_status, col_percent, col_actions = st.columns([2, 3, 3])
@@ -211,26 +221,26 @@ for i in range(int(num_users)):
             st.write(f"Kamyab Entries: **{current_job['success_count']}**")
             
         with col_actions:
-            # INDIVIDUAL RUN BUTTON FOR EACH USER 
-            if u_file and u_bearer and current_job["status"] in ["Not Started", "Completed 🎉"]:
+            # RUN BUTTON (Stays visible as long as data is loaded once)
+            if has_data and u_bearer and current_job["status"] in ["Not Started", "Completed 🎉"]:
                 if st.button(f"🚀 Run User {i+1} Automation", key=f"run_btn_{user_id}", type="primary", use_container_width=True):
-                    df_loaded = pd.read_csv(u_file)
-                    current_job["total_records"] = len(df_loaded)
+                    df_to_run = st.session_state["user_files"][user_id]
+                    current_job["status"] = "Running ⏳"
                     current_job["current_index"] = 0
                     current_job["success_count"] = 0
                     
-                    t = threading.Thread(target=execution_worker, args=(user_id, df_loaded, u_bearer, u_fcm, u_vaccine, 0))
+                    t = threading.Thread(target=execution_worker, args=(user_id, df_to_run, u_bearer, u_fcm, u_vaccine, 0))
                     t.daemon = True
                     t.start()
                     st.rerun()
 
-            # Resume Button (If stopped or hit error)
-            if current_job["status"] in ["Error ❌", "Stopped 🛑"] and u_file:
+            # Resume/Resend Button
+            if current_job["status"] in ["Error ❌", "Stopped 🛑"] and has_data:
                 if st.button(f"🔄 Resume User {i+1}", key=f"resume_btn_{user_id}", use_container_width=True):
-                    df_loaded = pd.read_csv(u_file)
-                    current_job["total_records"] = len(df_loaded)
+                    df_to_run = st.session_state["user_files"][user_id]
+                    current_job["status"] = "Running ⏳"
                     
-                    t = threading.Thread(target=execution_worker, args=(user_id, df_loaded, u_bearer, u_fcm, u_vaccine, current_job["current_index"]))
+                    t = threading.Thread(target=execution_worker, args=(user_id, df_to_run, u_bearer, u_fcm, u_vaccine, current_job["current_index"]))
                     t.daemon = True
                     t.start()
                     st.rerun()
