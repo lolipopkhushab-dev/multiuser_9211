@@ -5,18 +5,14 @@ import time
 import random
 
 # Page Configuration
-st.set_page_config(page_title="9211 Live Dashboard", page_icon="🚜", layout="wide")
+st.set_page_config(page_title="9211 Stable Dashboard", page_icon="🚜", layout="wide")
 
-st.title("🚜 9211 Portal Multi-User Live Data Sender")
-st.write("Live status dashboard. Agar Code 401 aaye toh naya token dalein.")
+st.title("🚜 9211 Portal Multi-User Non-Stop Data Sender")
+st.write("Is version mein page baar-baar refresh nahi hoga. Data sukoon se row-by-row upload hoga.")
 
 # --- INITIALIZE PERSISTENT STORAGE ---
 if "user_files" not in st.session_state:
     st.session_state["user_files"] = {}
-if "logs" not in st.session_state:
-    st.session_state["logs"] = {}
-if "progress_state" not in st.session_state:
-    st.session_state["progress_state"] = {}
 
 VACCINE_LIST = (
     "Haemorrhagic Septicemia Vaccine (HS)",
@@ -147,20 +143,12 @@ num_users = st.sidebar.number_input("Kitne Users Ka Data Upload Karna Hai?", min
 for i in range(int(num_users)):
     user_id = f"User_{i+1}"
     
-    if user_id not in st.session_state["logs"]:
-        st.session_state["logs"][user_id] = ["No active process run yet."]
-    if user_id not in st.session_state["progress_state"]:
-        st.session_state["progress_state"][user_id] = {"done": 0, "total": 0, "success": 0, "failed": 0, "status": "Idle"}
-        
-    p_state = st.session_state["progress_state"][user_id]
-    
     with st.expander(f"👤 USER PROFILE #{i+1} - Panel Manager", expanded=True):
         c1, c2, c3 = st.columns([2, 3, 3])
         with c1:
             u_file = st.file_uploader(f"Upload CSV File", type=["csv"], key=f"file_{user_id}")
             if u_file is not None:
                 st.session_state["user_files"][user_id] = pd.read_csv(u_file)
-                p_state["total"] = len(st.session_state["user_files"][user_id])
         with c2:
             u_bearer = st.text_input(f"Bearer Token", key=f"bearer_{user_id}")
         with c3:
@@ -170,54 +158,52 @@ for i in range(int(num_users)):
         
         has_data = user_id in st.session_state["user_files"]
         
-        st.caption("Live Logs / Error Stream:")
-        st.text_area("", value="\n".join(st.session_state["logs"][user_id][-6:]), height=110, key=f"log_box_{user_id}", disabled=True)
+        # Live UI Containers placeholders
+        status_box = st.empty()
+        progress_box = st.empty()
+        log_box = st.empty()
         
-        col_status, col_percent, col_actions = st.columns([2, 3, 3])
+        # Initial View Setup
+        status_box.markdown("**Status:** Idle ⚪")
+        progress_box.progress(0.0, text="Progress: 0%")
+        log_box.text_area("Live Logs:", value="Awaiting Execution...", height=100, key=f"init_log_{user_id}", disabled=True)
         
-        with col_status:
-            st.write(f"**Status:** {p_state['status']}")
-            st.write(f"Kamyab: **{p_state['success']}** | Failed: **{p_state['failed']}**")
+        if has_data and u_bearer:
+            if st.button(f"🚀 Run User {i+1} Live", key=f"run_btn_{user_id}", type="primary", use_container_width=True):
+                df = st.session_state["user_files"][user_id]
+                total_records = len(df)
                 
-        with col_percent:
-            pct = int((p_state["done"] / p_state["total"]) * 100) if p_state["total"] > 0 else 0
-            st.progress(pct / 100.0, text=f"Progress: {p_state['done']}/{p_state['total']} ({pct}%)")
-            
-        with col_actions:
-            if has_data and u_bearer:
-                if st.button(f"🚀 Run User {i+1} Live", key=f"run_btn_{user_id}", type="primary", use_container_width=True):
-                    df = st.session_state["user_files"][user_id]
-                    p_state["status"] = "Processing... ⚡"
-                    st.session_state["logs"][user_id] = ["Starting upload script..."]
+                status_box.markdown("**Status:** Processing... ⚡")
+                local_logs = ["Starting upload script..."]
+                log_box.text_area("Live Logs:", value="\n".join(local_logs), height=100, key=f"run_log_{user_id}", disabled=True)
+                
+                success_count = 0
+                failed_count = 0
+                
+                for idx, row in df.iterrows():
+                    status_code, response_text = send_row(row, u_bearer, u_fcm, u_vaccine, df.columns)
                     
-                    for idx, row in df.iterrows():
-                        status_code, response_text = send_row(row, u_bearer, u_fcm, u_vaccine, df.columns)
+                    if status_code in [200, 201]:
+                        success_count += 1
+                        log_msg = f"🟢 Row {idx+1} [Farmer: {row.get('FarmerID','N/A')}]: 200 - OK"
+                    else:
+                        failed_count += 1
+                        log_msg = f"❌ Row {idx+1} Failed: {status_code} - {response_text[:60]}"
                         
-                        if status_code in [200, 201]:
-                            p_state["success"] += 1
-                            log_msg = f"🟢 Row {idx+1} [Farmer: {row.get('FarmerID',' N/A ')}]: Status 200 - OK"
-                        else:
-                            p_state["failed"] += 1
-                            log_msg = f"❌ Row {idx+1} Failed: Code {status_code} - {response_text[:80]}"
-                            p_state["status"] = f"Error {status_code} ❌"
-                            st.session_state["logs"][user_id].append(log_msg)
-                            st.rerun()
-                            break # Token invalid hone par yahin ruk jaye
-                            
-                        st.session_state["logs"][user_id].append(log_msg)
-                        p_state["done"] = idx + 1
+                    local_logs.append(log_msg)
+                    
+                    # Update placeholders WITHOUT st.rerun()
+                    status_box.markdown(f"**Status:** Processing... ⚡ | Kamyab: **{success_count}** | Failed: **{failed_count}**")
+                    pct = int(((idx + 1) / total_records) * 100)
+                    progress_box.progress((idx + 1) / total_records, text=f"Progress: {idx+1}/{total_records} ({pct}%)")
+                    log_box.text_area("Live Logs:", value="\n".join(local_logs[-5:]), height=100, key=f"loop_log_{user_id}_{idx}", disabled=True)
+                    
+                    if status_code == 401:
+                        status_box.error("❌ Session Expired (401)! Naya Token lagayein.")
+                        break
                         
-                        # Live refresh UI
-                        st.rerun()
-                        
-                        # Delay 40-100s
-                        time.sleep(random.randint(40, 100))
-                        
-                    if p_state["failed"] == 0:
-                        p_state["status"] = "Completed ✅"
-                    st.rerun()
-
-st.markdown("---")
-# WAPAS LAGA DIYA REFRESH BUTTON APKI SAHULAT K LIYE
-if st.button("🔄 Refresh Dashboard Manually", use_container_width=True):
-    st.rerun()
+                    # Delay 40-100 seconds
+                    time.sleep(random.randint(40, 100))
+                    
+                if failed_count == 0:
+                    status_box.success("🎉 Completed Successfully!")
