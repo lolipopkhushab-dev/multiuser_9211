@@ -5,10 +5,10 @@ import time
 import random
 
 # Page Configuration
-st.set_page_config(page_title="9211 Live Dashboard", page_icon="🚜", layout="wide")
+st.set_page_config(page_title="9211 Infinite Dashboard", page_icon="🚜", layout="wide")
 
-st.title("🚜 9211 Portal Multi-User Live Data Sender")
-st.write("Is version mein page baar-baar refresh nahi hoga. Data sukoon se row-by-row upload hoga.")
+st.title("🚜 9211 Portal Multi-User Non-Stop Data Sender")
+st.write("Is version mein loop kabhi nahi tootega. Data sukoon se row-by-row mukammal upload hoga.")
 
 # --- INITIALIZE PERSISTENT STORAGE ---
 if "user_files" not in st.session_state:
@@ -139,10 +139,17 @@ def send_row(row, bearer_token, fcm_token, vaccine_option, df_columns):
 # --- SIDEBAR CONTROL ---
 num_users = st.sidebar.number_input("Kitne Users Ka Data Upload Karna Hai?", min_value=1, max_value=30, value=3)
 
+# Global logs structure that survives script updates
+if "local_logs_dict" not in st.session_state:
+    st.session_state["local_logs_dict"] = {}
+
 # --- UI GENERATION LOOP ---
 for i in range(int(num_users)):
     user_id = f"User_{i+1}"
     
+    if user_id not in st.session_state["local_logs_dict"]:
+        st.session_state["local_logs_dict"][user_id] = ["Awaiting Execution..."]
+        
     with st.expander(f"👤 USER PROFILE #{i+1} - Panel Manager", expanded=True):
         c1, c2, c3 = st.columns([2, 3, 3])
         with c1:
@@ -158,54 +165,51 @@ for i in range(int(num_users)):
         
         has_data = user_id in st.session_state["user_files"]
         
-        # Live UI Dynamic Placeholders (No page reloads)
+        # --- PLACEHOLDERS FOR DYNAMIC REFRESH ---
         status_box = st.empty()
         progress_box = st.empty()
         log_box = st.empty()
         
+        # Default Look
         status_box.markdown("**Status:** Idle ⚪")
         progress_box.progress(0.0, text="Progress: 0%")
-        log_box.text_area("Live Logs:", value="Awaiting Execution...", height=100, key=f"init_log_{user_id}", disabled=True)
+        log_box.text_area("Live Logs Stream:", value="\n".join(st.session_state["local_logs_dict"][user_id][-5:]), height=120, key=f"box_{user_id}", disabled=True)
         
         if has_data and u_bearer:
-            if st.button(f"🚀 Run User {i+1} Live", key=f"run_btn_{user_id}", type="primary", use_container_width=True):
+            if st.button(f"🚀 Run User {i+1} Non-Stop", key=f"run_btn_{user_id}", type="primary", use_container_width=True):
                 df = st.session_state["user_files"][user_id]
                 total_records = len(df)
                 
-                status_box.markdown("**Status:** Processing... ⚡")
-                local_logs = ["Starting upload script..."]
-                
+                st.session_state["local_logs_dict"][user_id] = ["Starting upload automation..."]
                 success_count = 0
                 failed_count = 0
                 
+                # Pure Loop without st.rerun() inside
                 for idx, row in df.iterrows():
+                    status_box.markdown(f"**Status:** Processing Row {idx+1}... ⚡ | Kamyab: **{success_count}** | Failed: **{failed_count}**")
+                    
                     status_code, response_text = send_row(row, u_bearer, u_fcm, u_vaccine, df.columns)
                     
                     if status_code in [200, 201]:
                         success_count += 1
-                        log_msg = f"🟢 Row {idx+1} [Farmer: {row.get('FarmerID','N/A')}]: 200 - OK"
+                        log_msg = f"🟢 Row {idx+1} [Farmer: {row.get('FarmerID','N/A')}]: Status 200 - OK"
                     else:
                         failed_count += 1
-                        log_msg = f"❌ Row {idx+1} Failed: {status_code} - {response_text[:60]}"
+                        log_msg = f"❌ Row {idx+1} Failed: Code {status_code} - {response_text[:50]}"
                         
-                    local_logs.append(log_msg)
+                    st.session_state["local_logs_dict"][user_id].append(log_msg)
                     
-                    # Update placeholders WITHOUT triggering st.rerun() loop
-                    status_box.markdown(f"**Status:** Processing... ⚡ | Kamyab: **{success_count}** | Failed: **{failed_count}**")
+                    # Update screen live without reloading script
                     pct = int(((idx + 1) / total_records) * 100)
                     progress_box.progress((idx + 1) / total_records, text=f"Progress: {idx+1}/{total_records} ({pct}%)")
-                    log_box.text_area("Live Logs:", value="\n".join(local_logs[-5:]), height=100, key=f"loop_log_{user_id}_{idx}", disabled=True)
+                    log_box.text_area("Live Logs Stream:", value="\n".join(st.session_state["local_logs_dict"][user_id][-5:]), height=120, key=f"box_run_{user_id}_{idx}", disabled=True)
                     
                     if status_code == 401:
-                        status_box.error("❌ Token Expired (401)! Naya Token lagayein.")
+                        status_box.error("❌ Token Expired (401 Error)! Loop stopped.")
                         break
                         
-                    # Delay 40-100 seconds
+                    # Random Delay between rows (40 to 100 seconds)
                     time.sleep(random.randint(40, 100))
                     
                 if failed_count == 0 and status_code != 401:
-                    status_box.success("🎉 Completed Successfully!")
-
-st.markdown("---")
-if st.button("🔄 Refresh Dashboard Manually", use_container_width=True):
-    st.rerun()
+                    status_box.success("🎉 All Records Sent Successfully!")
