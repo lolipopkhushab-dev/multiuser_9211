@@ -5,9 +5,9 @@ import time
 import random
 
 # Page Configuration
-st.set_page_config(page_title="9211 Stable Dashboard", page_icon="🚜", layout="wide")
+st.set_page_config(page_title="9211 Live Dashboard", page_icon="🚜", layout="wide")
 
-st.title("🚜 9211 Portal Multi-User Non-Stop Data Sender")
+st.title("🚜 9211 Portal Multi-User Live Data Sender")
 st.write("Is version mein page baar-baar refresh nahi hoga. Data sukoon se row-by-row upload hoga.")
 
 # --- INITIALIZE PERSISTENT STORAGE ---
@@ -158,12 +158,11 @@ for i in range(int(num_users)):
         
         has_data = user_id in st.session_state["user_files"]
         
-        # Live UI Containers placeholders
+        # Live UI Dynamic Placeholders (No page reloads)
         status_box = st.empty()
         progress_box = st.empty()
         log_box = st.empty()
         
-        # Initial View Setup
         status_box.markdown("**Status:** Idle ⚪")
         progress_box.progress(0.0, text="Progress: 0%")
         log_box.text_area("Live Logs:", value="Awaiting Execution...", height=100, key=f"init_log_{user_id}", disabled=True)
@@ -175,7 +174,6 @@ for i in range(int(num_users)):
                 
                 status_box.markdown("**Status:** Processing... ⚡")
                 local_logs = ["Starting upload script..."]
-                log_box.text_area("Live Logs:", value="\n".join(local_logs), height=100, key=f"run_log_{user_id}", disabled=True)
                 
                 success_count = 0
                 failed_count = 0
@@ -192,18 +190,22 @@ for i in range(int(num_users)):
                         
                     local_logs.append(log_msg)
                     
-                    # Update placeholders WITHOUT st.rerun()
+                    # Update placeholders WITHOUT triggering st.rerun() loop
                     status_box.markdown(f"**Status:** Processing... ⚡ | Kamyab: **{success_count}** | Failed: **{failed_count}**")
                     pct = int(((idx + 1) / total_records) * 100)
                     progress_box.progress((idx + 1) / total_records, text=f"Progress: {idx+1}/{total_records} ({pct}%)")
                     log_box.text_area("Live Logs:", value="\n".join(local_logs[-5:]), height=100, key=f"loop_log_{user_id}_{idx}", disabled=True)
                     
                     if status_code == 401:
-                        status_box.error("❌ Session Expired (401)! Naya Token lagayein.")
+                        status_box.error("❌ Token Expired (401)! Naya Token lagayein.")
                         break
                         
                     # Delay 40-100 seconds
                     time.sleep(random.randint(40, 100))
                     
-                if failed_count == 0:
+                if failed_count == 0 and status_code != 401:
                     status_box.success("🎉 Completed Successfully!")
+
+st.markdown("---")
+if st.button("🔄 Refresh Dashboard Manually", use_container_width=True):
+    st.rerun()
